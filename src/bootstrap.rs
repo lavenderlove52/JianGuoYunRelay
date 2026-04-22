@@ -20,6 +20,9 @@ use crate::config::Config;
 
 /// 加载配置、初始化日志、启动 HTTP 服务（支持 Ctrl+C 优雅退出）。
 pub async fn run() -> Result<(), String> {
+    // 从项目根目录 `.env` 加载环境变量（若文件不存在则忽略）；不覆盖已存在的环境变量。
+    let _ = dotenvy::dotenv();
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
         .init();

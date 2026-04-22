@@ -5,6 +5,7 @@ edition = "2021"
 description = "WebDAV relay to Jianguoyun (Nutstore) for KeePass and similar clients"
 
 [dependencies]
+dotenvy = "0.15"
 axum = { version = "0.7", features = ["macros"] }
 bytes = "1"
 http = "1"

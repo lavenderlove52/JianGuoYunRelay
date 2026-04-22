@@ -112,9 +112,9 @@ impl NutstoreClient {
 /// 从上游响应挑选可转发给客户端的响应头（不含 hop-by-hop）。
 pub fn filter_forward_headers(src: &HeaderMap) -> HeaderMap {
     let mut out = HeaderMap::new();
-    for key in [ETAG, CONTENT_LENGTH, CONTENT_TYPE, LAST_MODIFIED] {
+    for key in [ETAG, CONTENT_LENGTH, CONTENT_TYPE, LAST_MODIFIED].iter() {
         if let Some(v) = src.get(key) {
-            out.insert(key, v.clone());
+            out.insert(key.clone(), v.clone());
         }
     }
     out

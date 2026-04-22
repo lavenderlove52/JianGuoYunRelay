@@ -1,8 +1,8 @@
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::header::{ALLOW, CONTENT_TYPE, ETAG, IF_MATCH, LAST_MODIFIED};
-use axum::http::{HeaderMap, Method, Request, Response, StatusCode};
-use axum::response::IntoResponse;
+use axum::http::header::{ALLOW, CONTENT_LENGTH, CONTENT_TYPE, ETAG, IF_MATCH, LAST_MODIFIED};
+use axum::http::{HeaderMap, Method, Request, StatusCode};
+use axum::response::{IntoResponse, Response};
 use http_body_util::BodyExt;
 use tracing::Instrument;
 
@@ -37,7 +37,7 @@ pub async fn dispatch_vault(
     .await
 }
 
-fn options_response(state: &AppState) -> Response {
+fn options_response(_state: &AppState) -> Response {
     let allow = "OPTIONS, GET, HEAD, PUT, PROPFIND";
     Response::builder()
         .status(StatusCode::OK)
@@ -56,8 +56,11 @@ async fn handle_head(state: &AppState) -> Result<Response, AppError> {
             .unwrap());
     }
     let mut rb = Response::builder().status(StatusCode::OK);
-    for (k, v) in filter_forward_headers(&res.headers) {
-        rb = rb.header(k, v);
+    let fwd = filter_forward_headers(&res.headers);
+    for name in [ETAG, CONTENT_LENGTH, CONTENT_TYPE, LAST_MODIFIED].iter() {
+        if let Some(v) = fwd.get(name) {
+            rb = rb.header(name.clone(), v.clone());
+        }
     }
     Ok(rb.body(Body::empty()).unwrap())
 }
@@ -71,8 +74,11 @@ async fn handle_get(state: &AppState) -> Result<Response, AppError> {
             .unwrap());
     }
     let mut rb = Response::builder().status(StatusCode::OK);
-    for (k, v) in filter_forward_headers(&res.headers) {
-        rb = rb.header(k, v);
+    let fwd = filter_forward_headers(&res.headers);
+    for name in [ETAG, CONTENT_LENGTH, CONTENT_TYPE, LAST_MODIFIED].iter() {
+        if let Some(v) = fwd.get(name) {
+            rb = rb.header(name.clone(), v.clone());
+        }
     }
     Ok(rb.body(Body::from(res.body)).expect("response build"))
 }
