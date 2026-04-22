@@ -1,0 +1,22 @@
+[package]
+name = "jian_guo_yun_relay"
+version = "0.1.0"
+edition = "2021"
+description = "WebDAV relay to Jianguoyun (Nutstore) for KeePass and similar clients"
+
+[dependencies]
+axum = { version = "0.7", features = ["macros"] }
+bytes = "1"
+http = "1"
+http-body-util = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+subtle = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tower = "0.5"
+tower-http = { version = "0.5", features = ["trace", "limit"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
+base64 = "0.22"
