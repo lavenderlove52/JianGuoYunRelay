@@ -8,7 +8,7 @@ use tracing::Instrument;
 
 use crate::error::AppError;
 use crate::state::AppState;
-use crate::upstream::filter_forward_headers;
+use crate::upstream::{filter_forward_headers, UpstreamResponse};
 use crate::version_guard::{pick_baselines, pre_put_check};
 
 use super::propfind::propfind_multistatus;
@@ -48,21 +48,14 @@ fn options_response(_state: &AppState) -> Response {
 }
 
 async fn handle_head(state: &AppState) -> Result<Response, AppError> {
-    let res = state.nutstore.head().await?;
+    let res = load_metadata_response(state).await?;
     if !res.status.is_success() {
         return Ok(Response::builder()
             .status(res.status)
             .body(Body::empty())
             .unwrap());
     }
-    let mut rb = Response::builder().status(StatusCode::OK);
-    let fwd = filter_forward_headers(&res.headers);
-    for name in [ETAG, CONTENT_LENGTH, CONTENT_TYPE, LAST_MODIFIED].iter() {
-        if let Some(v) = fwd.get(name) {
-            rb = rb.header(name.clone(), v.clone());
-        }
-    }
-    Ok(rb.body(Body::empty()).unwrap())
+    Ok(metadata_only_response(StatusCode::OK, &res.headers, Body::from(res.body)))
 }
 
 async fn handle_get(state: &AppState) -> Result<Response, AppError> {
@@ -144,12 +137,103 @@ async fn handle_propfind(state: &AppState, body: Body) -> Result<Response, AppEr
         .collect()
         .await
         .map_err(|_| AppError::BadRequest)?;
+    let res = load_metadata_response(state).await?;
+    if !res.status.is_success() {
+        return Ok(Response::builder()
+            .status(res.status)
+            .body(Body::empty())
+            .unwrap());
+    }
     let href = state.config.vault_path.clone();
-    let name = href.trim_start_matches('/').to_string();
-    let xml = propfind_multistatus(&href, &name);
+    let name = href
+        .rsplit('/')
+        .find(|seg| !seg.is_empty())
+        .unwrap_or(href.trim_start_matches('/'))
+        .to_string();
+    let xml = propfind_multistatus(
+        &href,
+        &name,
+        res.headers.get(CONTENT_LENGTH).and_then(|v| v.to_str().ok()),
+        res.headers.get(ETAG).and_then(|v| v.to_str().ok()),
+        res.headers.get(LAST_MODIFIED).and_then(|v| v.to_str().ok()),
+    );
     Ok(Response::builder()
         .status(StatusCode::MULTI_STATUS)
         .header(CONTENT_TYPE, "application/xml; charset=utf-8")
         .body(Body::from(xml))
         .unwrap())
+}
+
+async fn load_metadata_response(state: &AppState) -> Result<UpstreamResponse, AppError> {
+    let head = state.nutstore.head().await?;
+    if !head.status.is_success() {
+        return Ok(head);
+    }
+    if metadata_complete(&head.headers) {
+        return Ok(head);
+    }
+    let get = state.nutstore.get().await?;
+    if get.status.is_success() {
+        return Ok(get);
+    }
+    Ok(head)
+}
+
+fn metadata_complete(headers: &HeaderMap) -> bool {
+    [CONTENT_LENGTH, CONTENT_TYPE, ETAG, LAST_MODIFIED]
+        .iter()
+        .all(|name| headers.get(name).is_some())
+}
+
+fn metadata_only_response(status: StatusCode, headers: &HeaderMap, body: Body) -> Response {
+    let fwd = filter_forward_headers(headers);
+    let mut resp = Response::builder()
+        .status(status)
+        .body(body)
+        .unwrap();
+    for name in [ETAG, CONTENT_LENGTH, CONTENT_TYPE, LAST_MODIFIED].iter() {
+        if let Some(v) = fwd.get(name) {
+            resp.headers_mut().insert(name.clone(), v.clone());
+        }
+    }
+    resp
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::HeaderValue;
+
+    use super::*;
+
+    #[test]
+    fn head_metadata_response_keeps_upstream_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_LENGTH, HeaderValue::from_static("24439"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+        headers.insert(ETAG, HeaderValue::from_static("\"etag-1\""));
+        headers.insert(LAST_MODIFIED, HeaderValue::from_static("Fri, 24 Apr 2026 06:00:50 GMT"));
+
+        let resp = metadata_only_response(StatusCode::OK, &headers, Body::from(vec![0_u8; 24439]));
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(CONTENT_LENGTH).unwrap(), "24439");
+        assert_eq!(resp.headers().get(CONTENT_TYPE).unwrap(), "application/octet-stream");
+        assert_eq!(resp.headers().get(ETAG).unwrap(), "\"etag-1\"");
+        assert_eq!(
+            resp.headers().get(LAST_MODIFIED).unwrap(),
+            "Fri, 24 Apr 2026 06:00:50 GMT"
+        );
+    }
+
+    #[test]
+    fn metadata_complete_requires_common_file_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_LENGTH, HeaderValue::from_static("24439"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+        headers.insert(LAST_MODIFIED, HeaderValue::from_static("Fri, 24 Apr 2026 06:00:50 GMT"));
+        assert!(!metadata_complete(&headers));
+
+        headers.insert(ETAG, HeaderValue::from_static("\"etag-1\""));
+        assert!(metadata_complete(&headers));
+    }
 }
